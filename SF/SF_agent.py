@@ -1,30 +1,48 @@
-import numpy as np
-from keras.models import Sequential
-from keras.layers import Dense
+from keras.layers import Input, Dense, BatchNormalization, Dropout, Lambda
+from keras.models import Model
 from keras.optimizers import Adam
+import numpy as np
 
-class CustomAgent:
+class CustomAgent: # 우선은 간단한 모델로 재실험 / 모델 구조 튜닝은 자동머신러닝 기법으로 추후 최적화
     def __init__(self, state_size, action_size):
         self.state_size = state_size
         self.action_size = action_size
-        self.gamma = 0.99  # discount rate
+        self.gamma = 0.99  
         self.learning_rate = 0.01
         self.states = []
         self.actions = []
         self.rewards = []
-        self.model = self._build_model()
+        self.model = self.build_model()
 
-    def _build_model(self):
-        model = Sequential()
-        model.add(Dense(24, input_dim=self.state_size, activation='relu'))
-        model.add(Dense(24, activation='relu'))
-        model.add(Dense(self.action_size, activation='softmax'))  
+    def build_model(self):
+        inputs = Input(shape=(self.state_size,))
+        
+        x = Dense(128, activation='relu')(inputs)
+        x = BatchNormalization()(x)
+        x = Dropout(0.3)(x)
+        
+        x = Dense(64, activation='relu')(x)
+        x = BatchNormalization()(x)
+        x = Dropout(0.3)(x)
+
+        x = Dense(32, activation='relu')(inputs)
+        x = BatchNormalization()(x)
+        x = Dropout(0.2)(x)
+        
+        x = Dense(32, activation='relu')(x)
+        x = BatchNormalization()(x)
+        x = Dropout(0.2)(x)
+        
+        outputs = Dense(self.action_size, activation='softmax')(x)
+        
+        model = Model(inputs=inputs, outputs=outputs)
+        
         model.compile(loss='categorical_crossentropy', optimizer=Adam(lr=self.learning_rate))
         return model
 
     def act(self, state):
         state = state.reshape([1, state.shape[0]])
-        action_values = self.model.predict(state,verbose = 0)
+        action_values = self.model.predict(state, verbose=0)
         return action_values.flatten()
 
     def store_transition(self, state, action, reward):
@@ -33,14 +51,12 @@ class CustomAgent:
         self.rewards.append(reward)
 
     def train(self):
-        episode_length = len(self.states)
+        # episode_length = len(self.states)
         discounted_rewards = self._discount_and_normalize_rewards()
 
         X = np.vstack(self.states)
-        Y = np.array(self.actions) * discounted_rewards.reshape(-1, 1)  # reshape 보상 to (N, 1)
-
-
-
+        Y = np.array(self.actions) * discounted_rewards.reshape(-1, 1)
+        
         self.model.train_on_batch(X, Y)
         self.states, self.actions, self.rewards = [], [], []
 
@@ -51,7 +67,6 @@ class CustomAgent:
             running_add = running_add * self.gamma + self.rewards[t]
             discounted_rewards[t] = running_add
 
-        # Normalize
         if np.std(discounted_rewards) != 0:
             discounted_rewards -= np.mean(discounted_rewards)
             discounted_rewards /= np.std(discounted_rewards)
@@ -76,19 +91,19 @@ class ActorCriticAgent:
         self.actions = []
         self.rewards = []
 
-        self.actor, self.critic = self._build_actor_critic()
+        self.actor, self.critic = self.build_actor_critic()
         self.actor_optimizer = Adam(learning_rate=self.learning_rate)
         self.critic_optimizer = Adam(learning_rate=self.learning_rate)
 
-    def _build_actor_critic(self):
+    def build_actor_critic(self):
         state_input = Input(shape=(self.state_size,))
-        x = Dense(24, activation='relu')(state_input)
-        x = Dense(24, activation='relu')(x)
+        x = Dense(128, activation='relu')(state_input)
+        x = Dense(64, activation='relu')(x)
+        x = Dense(32, activation='relu')(x)
+        x = Dense(16, activation='relu')(x)
 
-        # Actor model
-        probs = Dense(self.action_size, activation='softmax')(x)
+        probs = Dense(self.action_size, activation='softmax')(x) # Actor 이랑 Critic 겹침 구조 사용해두기 , 모델 우선은 간단히 구조 지정
 
-        # Critic model
         values = Dense(1, activation='linear')(x)
 
         actor = Model(inputs=state_input, outputs=probs)
@@ -109,7 +124,7 @@ class ActorCriticAgent:
 
     def train(self):
         states = np.array(self.states, dtype=np.float32)
-        actions = np.array(self.actions, dtype=np.float32)  # 액션을 그대로 사용
+        actions = np.array(self.actions, dtype=np.float32)  # 액션 네비게이션에 가중치로 그대로 사용하기
 
         discounted_rewards = self._discount_and_normalize_rewards()
 
@@ -118,7 +133,6 @@ class ActorCriticAgent:
             policy = self.actor(states)
             advantages = discounted_rewards - tf.squeeze(values)
 
-            # 액션 자체를 사용하여 actor_loss를 계산하기
             actor_loss = -tf.reduce_mean(tf.reduce_sum(actions * tf.math.log(policy + 1e-10), axis=1) * advantages)
             critic_loss = tf.reduce_mean(tf.math.square(values - discounted_rewards))
 
